@@ -1,14 +1,9 @@
-"""Runtime bridge that routes X4G outbound TCP connections via regional exits.
+"""Runtime bridge for Railway regional egress.
 
-The existing relay files call asyncio.open_connection() directly. This module
-keeps those files unchanged and wraps only calls originating from relay_vless.py
-or xhttp_siz10.py. The region is read from the authenticated link's LINKS entry
-using the VLESS UUID found in the caller stack.
-
-For backward compatibility, a link may select its country either with a future
-`region`/`exit_region` field or simply by putting a country code in its label,
-for example `NL - Premium`, `DE - 100GB`, `GB`, or `US Home`. If no region is
-selected, the existing direct connection behavior is preserved.
+The existing relay modules call asyncio.open_connection() directly. This
+bridge intercepts only calls originating from relay_vless.py/xhttp_siz10.py.
+A link may select NL/DE/GB/US through `region`/`exit_region`, or by putting the
+country code in its label. If neither is present, EXIT_DEFAULT_REGION is used.
 """
 from __future__ import annotations
 
@@ -18,7 +13,6 @@ import os
 import re
 from pathlib import Path
 import importlib.util
-
 
 _BASE = Path(__file__).resolve().parent
 _IMPL_PATH = _BASE / "v2ray-railway" / "exit_nodes.py"
@@ -31,10 +25,10 @@ _SPEC.loader.exec_module(_IMPL)
 _ORIGINAL_OPEN_CONNECTION = asyncio.open_connection
 _INSTALLED = False
 _REGION_RE = re.compile(r"(?<![A-Z])(NL|DE|GB|US)(?![A-Z])", re.IGNORECASE)
+_ALLOWED = {"NL", "DE", "GB", "US"}
 
 
 def _caller_uuid() -> str | None:
-    """Find the active X4G UUID without changing the existing relay signatures."""
     for frame_info in inspect.stack(context=0):
         filename = os.path.basename(frame_info.filename)
         if filename not in {"relay_vless.py", "xhttp_siz10.py"}:
@@ -47,16 +41,15 @@ def _caller_uuid() -> str | None:
 
 def _region_for_uuid(uuid: str | None) -> str | None:
     if not uuid:
-        return None
+        region = os.environ.get("EXIT_DEFAULT_REGION", "NL")
+        return region.strip().upper() if region.strip().upper() in _ALLOWED else "NL"
     try:
-        # main.LINKS is populated after startup; importing here avoids a startup
-        # cycle because this bridge is loaded before main imports relay modules.
         import main
         link = main.LINKS.get(uuid) or {}
         region = link.get("region") or link.get("exit_region")
         if region:
             region = str(region).strip().upper()
-            if region in {"NL", "DE", "GB", "US"}:
+            if region in _ALLOWED:
                 return region
         label = str(link.get("label") or "")
         match = _REGION_RE.search(label.upper())
@@ -64,12 +57,11 @@ def _region_for_uuid(uuid: str | None) -> str | None:
             return match.group(1).upper()
     except Exception:
         pass
-    return None
+    default_region = os.environ.get("EXIT_DEFAULT_REGION", "NL").strip().upper()
+    return default_region if default_region in _ALLOWED else "NL"
 
 
 async def _patched_open_connection(host, port, *args, **kwargs):
-    # Never intercept the bridge implementation itself, otherwise proxy setup
-    # would recurse through this wrapper.
     for frame_info in inspect.stack(context=0):
         if os.path.basename(frame_info.filename) == "exit_nodes.py":
             return await _ORIGINAL_OPEN_CONNECTION(host, port, *args, **kwargs)
