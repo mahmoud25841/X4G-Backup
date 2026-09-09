@@ -5,14 +5,17 @@ keeps those files unchanged and wraps only calls originating from relay_vless.py
 or xhttp_siz10.py. The region is read from the authenticated link's LINKS entry
 using the VLESS UUID found in the caller stack.
 
-If no region is configured, behavior remains the existing direct connection
-unless EXIT_ALLOW_DIRECT_FALLBACK=false is set.
+For backward compatibility, a link may select its country either with a future
+`region`/`exit_region` field or simply by putting a country code in its label,
+for example `NL - Premium`, `DE - 100GB`, `GB`, or `US Home`. If no region is
+selected, the existing direct connection behavior is preserved.
 """
 from __future__ import annotations
 
 import asyncio
 import inspect
 import os
+import re
 from pathlib import Path
 import importlib.util
 
@@ -27,6 +30,7 @@ _SPEC.loader.exec_module(_IMPL)
 
 _ORIGINAL_OPEN_CONNECTION = asyncio.open_connection
 _INSTALLED = False
+_REGION_RE = re.compile(r"(?<![A-Z])(NL|DE|GB|US)(?![A-Z])", re.IGNORECASE)
 
 
 def _caller_uuid() -> str | None:
@@ -50,9 +54,17 @@ def _region_for_uuid(uuid: str | None) -> str | None:
         import main
         link = main.LINKS.get(uuid) or {}
         region = link.get("region") or link.get("exit_region")
-        return str(region).strip().upper() if region else None
+        if region:
+            region = str(region).strip().upper()
+            if region in {"NL", "DE", "GB", "US"}:
+                return region
+        label = str(link.get("label") or "")
+        match = _REGION_RE.search(label.upper())
+        if match:
+            return match.group(1).upper()
     except Exception:
-        return None
+        pass
+    return None
 
 
 async def _patched_open_connection(host, port, *args, **kwargs):
