@@ -1,0 +1,28 @@
+{
+  "nodes": [
+    {
+      "id": "nl-1",
+      "region": "NL",
+      "endpoint": "https://NODE-ENDPOINT",
+      "enabled": true
+    },
+    {
+      "id": "de-1",
+      "region": "DE",
+      "endpoint": "https://NODE-ENDPOINT",
+      "enabled": true
+    },
+    {
+      "id": "gb-1",
+      "region": "GB",
+      "endpoint": "https://NODE-ENDPOINT",
+      "enabled": true
+    },
+    {
+      "id": "us-1",
+      "region": "US",
+      "endpoint": "https://NODE-ENDPOINT",
+      "enabled": true
+    }
+  ]
+}
