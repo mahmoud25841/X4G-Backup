@@ -797,7 +797,14 @@ def register_xhttp_router():
     from xhttp_siz10 import router as xhttp_router
     app.include_router(xhttp_router)
 
-from telegram_bot import start_bot as _tg_start_bot, stop_bot as _tg_stop_bot
+# Telegram bot imports are deferred until startup to avoid circular imports.
+async def _tg_start_bot():
+    from telegram_bot import start_bot
+    await start_bot()
+
+async def _tg_stop_bot():
+    from telegram_bot import stop_bot
+    await stop_bot()
 
 # ── HTTP Proxy ────────────────────────────────────────────────────────────────
 _HOP = {"connection","keep-alive","proxy-authenticate","proxy-authorization",
