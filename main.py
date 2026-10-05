@@ -196,8 +196,8 @@ async def require_auth(request: Request):
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
 @app.on_event("startup")
-    register_xhttp_router()
 async def startup():
+    register_xhttp_router()
     global http_client
     limits = httpx.Limits(max_connections=500, max_keepalive_connections=100)
     timeout = httpx.Timeout(30.0, connect=10.0)
