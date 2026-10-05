@@ -778,8 +778,15 @@ app.add_api_websocket_route("/ws/{uuid}", websocket_tunnel_proxy)
 # ══════════════════════════════════════════════════════════════════════════════
 # XHTTP — Siz10a XHTTP Ultra (ترابرد جدید، جدا از VLESS/WS، هر ۳ مد)
 # ══════════════════════════════════════════════════════════════════════════════
-from xhttp_siz10 import router as xhttp_router
-app.include_router(xhttp_router)
+# ══════════════════════════════════════════════════════════════════════════════
+# XHTTP — Siz10a XHTTP Ultra
+# ══════════════════════════════════════════════════════════════════════════════
+
+def register_xhttp_router():
+    from xhttp_siz10 import router as xhttp_router
+    app.include_router(xhttp_router)
+
+register_xhttp_router()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ربات مدیریت تلگرام (اختیاری — فقط اگه TELEGRAM_BOT_TOKEN ست شده باشه فعال می‌شه)
