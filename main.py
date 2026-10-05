@@ -196,6 +196,7 @@ async def require_auth(request: Request):
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
 @app.on_event("startup")
+    register_xhttp_router()
 async def startup():
     global http_client
     limits = httpx.Limits(max_connections=500, max_keepalive_connections=100)
@@ -782,15 +783,20 @@ app.add_api_websocket_route("/ws/{uuid}", websocket_tunnel_proxy)
 # XHTTP — Siz10a XHTTP Ultra
 # ══════════════════════════════════════════════════════════════════════════════
 
-def register_xhttp_router():
-    from xhttp_siz10 import router as xhttp_router
-    app.include_router(xhttp_router)
+# XHTTP router registration is deferred until after main.py has finished importing.
+# xhttp_siz10 imports main as a module reference, so registering it here would still
+# re-enter main.py while it is partially initialized.
 
-register_xhttp_router()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ربات مدیریت تلگرام (اختیاری — فقط اگه TELEGRAM_BOT_TOKEN ست شده باشه فعال می‌شه)
 # ══════════════════════════════════════════════════════════════════════════════
+# Register XHTTP only after the module is fully initialized.
+# This function is called by the startup hook below.
+def register_xhttp_router():
+    from xhttp_siz10 import router as xhttp_router
+    app.include_router(xhttp_router)
+
 from telegram_bot import start_bot as _tg_start_bot, stop_bot as _tg_stop_bot
 
 # ── HTTP Proxy ────────────────────────────────────────────────────────────────
