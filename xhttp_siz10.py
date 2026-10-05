@@ -19,18 +19,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
-from main import (
-    LINKS,
-    LINKS_LOCK,
-    stats,
-    hourly_traffic,
-    connections,
-    error_logs,
-    logger,
-    is_link_allowed,
-    is_ip_allowed,
-    save_state,
-)
+import main as _main
 from relay_vless import parse_vless_header, check_and_use
 from speed_limit import throttle
 
@@ -195,9 +184,9 @@ async def _open_tcp_from_header(first_chunk: bytes):
 
 
 async def _check_link(uuid: str):
-    async with LINKS_LOCK:
-        link = LINKS.get(uuid)
-    if not is_link_allowed(link):
+    async with _main.LINKS_LOCK:
+        link = _main.LINKS.get(uuid)
+    if not _main.is_link_allowed(link):
         raise HTTPException(status_code=403, detail="not authorized")
 
 
@@ -209,14 +198,14 @@ async def _get_or_create_session(uuid: str, mode: str, session_id: str, ip: str 
             sess["last_seen"] = time.time()
             return sess
 
-        async with LINKS_LOCK:
-            link = LINKS.get(uuid)
-        if not is_ip_allowed(link, uuid, ip):
-            logger.warning(f"🚫 XHTTP[{mode}] rejected uuid={uuid[:8]} ip={ip} (ip limit reached)")
+        async with _main.LINKS_LOCK:
+            link = _main.LINKS.get(uuid)
+        if not _main.is_ip_allowed(link, uuid, ip):
+            _main.logger.warning(f"🚫 XHTTP[{mode}] rejected uuid={uuid[:8]} ip={ip} (ip limit reached)")
             raise HTTPException(status_code=403, detail="ip limit reached")
 
         conn_id = secrets.token_urlsafe(6)
-        connections[conn_id] = {
+        _main.connections[conn_id] = {
             "uuid": uuid,
             "ip": ip,
             "connected_at": datetime.now().isoformat(),
@@ -234,7 +223,7 @@ async def _get_or_create_session(uuid: str, mode: str, session_id: str, ip: str 
             "flow": None,  # لازی ساخته می‌شه: _AdaptiveFlow مخصوص stream-up
         }
         xhttp_sessions[session_id] = sess
-        logger.info(f"new XHTTP[{mode}] session [{session_id[:8]}] uuid={uuid[:8]} ip={ip}")
+        _main.logger.info(f"new XHTTP[{mode}] session [{session_id[:8]}] uuid={uuid[:8]} ip={ip}")
         return sess
 
 
@@ -245,7 +234,7 @@ async def _mark_real_mode(session_id: str, sess: dict, real_mode: str):
     if sess.get("mode") == real_mode:
         return
     sess["mode"] = real_mode
-    conn = connections.get(sess.get("conn_id"))
+    conn = _main.connections.get(sess.get("conn_id"))
     if conn:
         conn["transport"] = f"xhttp-{real_mode}"
 
@@ -271,14 +260,14 @@ async def _teardown(session_id: str):
             await writer.wait_closed()
         except Exception:
             pass
-    connections.pop(sess.get("conn_id"), None)
+    _main.connections.pop(sess.get("conn_id"), None)
     dq = sess.get("down_q")
     if dq:
         try:
             dq.put_nowait(None)
         except Exception:
             pass
-    logger.info(f"closed XHTTP[{sess.get('mode')}] [{session_id[:8]}] total={len(xhttp_sessions)}")
+    _main.logger.info(f"closed XHTTP[{sess.get('mode')}] [{session_id[:8]}] total={len(xhttp_sessions)}")
 
 
 async def _reaper():
@@ -316,7 +305,7 @@ async def _pump_tcp_to_queue(session_id: str, uuid: str, reader: asyncio.StreamR
             async with XHTTP_LOCK:
                 sess = xhttp_sessions.get(session_id)
             if sess:
-                c = connections.get(sess["conn_id"])
+                c = _main.connections.get(sess["conn_id"])
                 if c:
                     c["bytes"] += len(data)
             payload = (b"\x00\x00" + data) if first else data
@@ -332,13 +321,13 @@ async def _pump_tcp_to_queue(session_id: str, uuid: str, reader: asyncio.StreamR
 async def _open_tcp_for_session(session_id: str, uuid: str, sess: dict, first_chunk: bytes):
     """تونل TCP رو از روی هدر VLESS باز می‌کنه و پمپ دانلینک رو راه می‌اندازه."""
     reader, writer, address, port = await _open_tcp_from_header(first_chunk)
-    logger.info(f"connect XHTTP[{sess['mode']}] [{session_id[:8]}] -> {address}:{port}")
+    _main.logger.info(f"connect XHTTP[{sess['mode']}] [{session_id[:8]}] -> {address}:{port}")
     sess["writer"] = writer
     sess["tcp_open"] = True
     sess["downlink_task"] = asyncio.create_task(
         _pump_tcp_to_queue(session_id, uuid, reader, sess["down_q"])
     )
-    asyncio.create_task(save_state())
+    asyncio.create_task(_main.save_state())
 
 
 def _downstream_gen(sess: dict):
@@ -388,8 +377,8 @@ async def packet_up_upload(uuid: str, session_id: str, seq: int, request: Reques
         raise HTTPException(status_code=403, detail="quota/disabled/unknown")
     await throttle(uuid, len(body))
 
-    stats["total_requests"] += 1
-    connections[sess["conn_id"]]["bytes"] += len(body)
+    _main.stats["total_requests"] += 1
+    _main.connections[sess["conn_id"]]["bytes"] += len(body)
 
     try:
         if sess["writer"] is None:
@@ -421,7 +410,7 @@ async def packet_up_upload(uuid: str, session_id: str, seq: int, request: Reques
         if sess["writer"].transport.get_write_buffer_size() > PACKET_UP_HIGH_WATER:
             await sess["writer"].drain()
     except Exception as exc:
-        error_logs.append({"error": str(exc), "time": datetime.now().isoformat()})
+        _main.error_logs.append({"error": str(exc), "time": datetime.now().isoformat()})
         await _teardown(session_id)
         raise HTTPException(status_code=502, detail="write failed")
 
@@ -450,7 +439,7 @@ async def stream_up_upload(uuid: str, session_id: str, request: Request):
         flow = _AdaptiveFlow()
         sess["flow"] = flow
 
-    conn = connections[sess["conn_id"]]   # یک بار لوک‌آپ، نه هر چانک
+    conn = _main.connections[sess["conn_id"]]   # یک بار لوک‌آپ، نه هر چانک
     writer = sess["writer"]               # ممکنه هنوز None باشه
 
     try:
@@ -463,7 +452,7 @@ async def stream_up_upload(uuid: str, session_id: str, request: Request):
                 raise HTTPException(status_code=403, detail="quota/disabled/unknown")
             await throttle(uuid, len(chunk))
 
-            stats["total_requests"] += 1
+            _main.stats["total_requests"] += 1
             conn["bytes"] += len(chunk)
 
             if writer is None:
@@ -479,7 +468,7 @@ async def stream_up_upload(uuid: str, session_id: str, request: Request):
         await _teardown(session_id)
         raise
     except Exception as exc:
-        error_logs.append({"error": str(exc), "time": datetime.now().isoformat()})
+        _main.error_logs.append({"error": str(exc), "time": datetime.now().isoformat()})
         await gate.flush()
         await _teardown(session_id)
         raise HTTPException(status_code=502, detail="stream error")
