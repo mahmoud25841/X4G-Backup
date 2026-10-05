@@ -765,7 +765,6 @@ async def delete_link(uid: str, _=Depends(require_auth)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 from relay_vless import (
-    RELAY_BUF,
     parse_vless_header,
     check_and_use,
     relay_ws_to_tcp,
